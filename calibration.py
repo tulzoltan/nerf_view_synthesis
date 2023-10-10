@@ -54,7 +54,11 @@ def calibrate_camera(H, W, red_fac, images):
     ret, CameraMatrix, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, gray.shape[::-1], None, None)
 
     #save calibration results
-    pickle.dump((CameraMatrix, dist), open("calibration.pkl", "wb"))
+    #out_dct = {"intrinsic": CameraMatrix.to_list(),
+    #           "distortion": dist.to_list()}
+    #with open("calib.json", "w") as file:
+    #    json.dump(out_dct, file)
+    pickle.dump((CameraMatrix, dist), open("calib.pkl", "wb"))
 
     #reprojection error
     mean_error = 0
@@ -90,7 +94,7 @@ def test_undistort(red_fac):
     img1 = cv2.imread("images/sfm2/20231008_230707.jpg")
     img1 = DownSampleImage(img1, red_fac)
 
-    CameraMatrix, dist = load_calibration("calibration.pkl")
+    CameraMatrix, dist = load_calibration("calib.pkl")
     img2 = undistort_image(img1, CameraMatrix, dist)
 
     cv2.imwrite("calibrated.png", img2)

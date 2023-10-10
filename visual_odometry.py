@@ -1,18 +1,19 @@
 import os
 import numpy as np
 import cv2
-
-from visualization import plotting
-from visualization.video import play_trip
-
+import pickle
 from tqdm import tqdm
+
+from calibration import DownSampleImage, undistort_image
+
+#from visualization import plotting
+#from visualization.video import play_trip
 
 
 class VisualOdometry():
-    def __init__(self, data_dir):
-        self.K, self.P = self._load_calib(os.path.join(data_dir, "calib.txt"))
-        #self.gt_poses = self._load_poses(os.path.join(data_dir, "poses.txt"))
-        self.images = self._load_images(os.path.join(data_dir, "image_l"))
+    def __init__(self):
+        self.K, self.dispar = self._load_calib("calib.pkl")
+        self.images = self._load_images("images/sfm2")
         self.orb = cv2.ORB_create(3000)
         FLANN_INDEX_LSH = 6
         index_params = dict(algorithm=FLANN_INDEX_LSH, table_number=6, key_size=12, multi_probe_level=1)
@@ -22,7 +23,7 @@ class VisualOdometry():
     @staticmethod
     def _load_calib(filepath):
         """
-        Loads the calibration of the camera
+        Loads camera calibration file
         Parameters
         ----------
         filepath (str): file path to the camera file
@@ -30,38 +31,13 @@ class VisualOdometry():
         Returns
         -------
         K (ndarray): intrinsic parameters
-        P (ndarray): projection matrix
         """
-        with open(filepath, 'r') as f:
-            params = np.fromstring(f.readline(), dtype=np.float64, sep=' ')
-            P = np.reshape(params, (3, 4))
-            K = P[0:3, 0:3]
-        return K, P
+        with open(filepath, 'rb') as file:
+            CameraMatrix, dist = pickle.load(file)
 
-    @staticmethod
-    def _load_poses(filepath):
-        """
-        Loads the GT poses
+        return CameraMatrix, dist
 
-        Parameters
-        ----------
-        filepath (str): The file path to the poses file
-
-        Returns
-        -------
-        poses (ndarray): The GT poses
-        """
-        poses = []
-        with open(filepath, 'r') as f:
-            for line in f.readlines():
-                T = np.fromstring(line, dtype=np.float64, sep=' ')
-                T = T.reshape(3, 4)
-                T = np.vstack((T, [0, 0, 0, 1]))
-                poses.append(T)
-        return poses
-
-    @staticmethod
-    def _load_images(filepath):
+    def _load_images(self, filepath):
         """
         Loads the images
 
@@ -73,8 +49,17 @@ class VisualOdometry():
         -------
         images (list): grayscale images
         """
-        image_paths = [os.path.join(filepath, file) for file in sorted(os.listdir(filepath))]
-        return [cv2.imread(path, cv2.IMREAD_GRAYSCALE) for path in image_paths]
+        images = []
+
+        for file in sorted(os.listdir(filepath)):
+            path = os.path.join(filepath, file)
+            img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+            img = DownSampleImage(img, 2)
+            img = undistort_image(img, self.K, self.dispar)
+            images.append(img)
+
+        return images
+
 
     @staticmethod
     def _form_transf(R, t):
@@ -91,7 +76,7 @@ class VisualOdometry():
         -------
         T (ndarray): The transformation matrix
         """
-        T = np.eye(4, dtype=np.float64)
+        T = np.eye(4, dtype=np.float32)
         T[:3, :3] = R
         T[:3, 3] = t
         return T
@@ -133,6 +118,7 @@ class VisualOdometry():
 
         img3 = cv2.drawMatches(self.images[i], kp1, self.images[i-1], 
                                kp2, good ,None,**draw_params)
+        img3 = cv2.resize(img3, (1920, 540))
         cv2.imshow("image", img3)
         cv2.waitKey(200)
 
@@ -182,10 +168,11 @@ class VisualOdometry():
             #Get the transformation matrix
             T = self._form_transf(R, t)
             #Make the projection matrix
-            P = np.concatenate((self.K, np.zeros((3, 1))), axis=1) @ T
+            ProMat = np.concatenate((self.K, np.zeros((3, 1))), axis=1)
+            P = ProMat @ T
 
             #Triangulate the 3D points
-            hom_Q1 = cv2.triangulatePoints(self.P, P, q1.T, q2.T)
+            hom_Q1 = cv2.triangulatePoints(ProMat, P, q1.T, q2.T)
             #Also seen from cam 2
             hom_Q2 = T @ hom_Q1
 
@@ -230,24 +217,19 @@ class VisualOdometry():
 
 
 if __name__ == "__main__":
-    data_dir = "images/sfm"
-    vo = VisualOdometry(data_dir)
+    vo = VisualOdometry()
 
     #play_trip(vo.images)  # Comment out to not play the trip
 
-    #gt_path = []
     estimated_path = []
-    for i, gt_pose in enumerate(tqdm(vo.gt_poses, unit="pose")):
-        if i == 0:
-            cur_pose = gt_pose
-        else:
-            q1, q2 = vo.get_matches(i)
-            transf = vo.get_pose(q1, q2)
-            cur_pose = np.matmul(cur_pose, np.linalg.inv(transf))
-        gt_path.append((gt_pose[0, 3], gt_pose[2, 3]))
+    cur_pose = np.eye(4)
+    for i in tqdm(range(len(vo.images))):
+        q1, q2 = vo.get_matches(i)
+        transf = vo.get_pose(q1, q2)
+        cur_pose = cur_pose @ np.linalg.inv(transf)
         estimated_path.append((cur_pose[0, 3], cur_pose[2, 3]))
 
-    plotting.visualize_paths(
-                gt_path, estimated_path, "Visual Odometry", 
-                file_out=os.path.basename(data_dir)+".html"
-            )
+    #plotting.visualize_paths(
+    #            gt_path, estimated_path, "Visual Odometry", 
+    #            file_out=os.path.basename(data_dir)+".html"
+    #        )
