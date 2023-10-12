@@ -12,7 +12,7 @@ from calibration import DownSampleImage, undistort_image
 class VisualOdometry():
     def __init__(self):
         self.H, self.W, self.rf, self.K, self.dp = self._load_calib("calib.pkl")
-        self.images = self._load_images("images/sfm2")
+        self.images = self._load_images("images/sfm_test")
         self.orb = cv2.ORB_create(3000)
         FLANN_INDEX_LSH = 6
         index_params = dict(algorithm=FLANN_INDEX_LSH, table_number=6, key_size=12, multi_probe_level=1)
