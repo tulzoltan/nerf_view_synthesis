@@ -4,15 +4,14 @@ import cv2
 import pickle
 from tqdm import tqdm
 
-from calibration import DownSampleImage, undistort_image
+import matplotlib.pyplot as plt
 
-#from visualization import plotting
-#from visualization.video import play_trip
+from calibration import DownSampleImage, undistort_image
 
 
 class VisualOdometry():
     def __init__(self):
-        self.K, self.dispar = self._load_calib("calib.pkl")
+        self.H, self.W, self.rf, self.K, self.dp = self._load_calib("calib.pkl")
         self.images = self._load_images("images/sfm2")
         self.orb = cv2.ORB_create(3000)
         FLANN_INDEX_LSH = 6
@@ -21,29 +20,34 @@ class VisualOdometry():
         self.flann = cv2.FlannBasedMatcher(indexParams=index_params, searchParams=search_params)
 
     @staticmethod
-    def _load_calib(filepath):
+    def _load_calib(filepath: str):
         """
         Loads camera calibration file
+
         Parameters
         ----------
-        filepath (str): file path to the camera file
+        filepath (str): path to the camera file
 
         Returns
         -------
-        K (ndarray): intrinsic parameters
+        height (int): image height
+        width (int): image width
+        red_fac (int): reduction factor for downsampling images
+        CameraMatrix (ndarray): intrinsic parameters
+        dist (ndarray): distortion parameters
         """
         with open(filepath, 'rb') as file:
-            CameraMatrix, dist = pickle.load(file)
+            height, width, red_fac, CameraMatrix, dist = pickle.load(file)
 
-        return CameraMatrix, dist
+        return height, width, red_fac, CameraMatrix, dist
 
-    def _load_images(self, filepath):
+    def _load_images(self, filepath: str):
         """
         Loads the images
 
         Parameters
         ----------
-        filepath (str): The file path to image dir
+        filepath (str): path to image directory
 
         Returns
         -------
@@ -54,8 +58,8 @@ class VisualOdometry():
         for file in sorted(os.listdir(filepath)):
             path = os.path.join(filepath, file)
             img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-            img = DownSampleImage(img, 2)
-            img = undistort_image(img, self.K, self.dispar)
+            img = DownSampleImage(img, self.rf)
+            img = undistort_image(img, self.K, self.dp)
             images.append(img)
 
         return images
@@ -81,19 +85,19 @@ class VisualOdometry():
         T[:3, 3] = t
         return T
 
-    def get_matches(self, i):
+    def get_matches(self, i: int):
         """
-        This function detects and computes keypoints and descriptors from 
-        the i-1'th and i'th image using the class orb object
+        This function detects keypoints and descriptors from 
+        the i-1'th and i'th image using the orb object
 
         Parameters
         ----------
-        i (int): The current frame
+        i (int): index of current frame
 
         Returns
         -------
-        q1 (ndarray): The good keypoints matches position in i-1'th image
-        q2 (ndarray): The good keypoints matches position in i'th image
+        q1 (ndarray): good keypoint matches in i-1'th image
+        q2 (ndarray): good keypoint matches in i'th image
         """
         #Find the keypoints and descriptors with ORB
         kp1, des1 = self.orb.detectAndCompute(self.images[i-1], None)
@@ -118,7 +122,6 @@ class VisualOdometry():
 
         img3 = cv2.drawMatches(self.images[i], kp1, self.images[i-1], 
                                kp2, good ,None,**draw_params)
-        img3 = cv2.resize(img3, (1920, 540))
         cv2.imshow("image", img3)
         cv2.waitKey(200)
 
@@ -221,15 +224,23 @@ if __name__ == "__main__":
 
     #play_trip(vo.images)  # Comment out to not play the trip
 
-    estimated_path = []
+    est_path = []
     cur_pose = np.eye(4)
+    extrinsics = []
     for i in tqdm(range(len(vo.images))):
         q1, q2 = vo.get_matches(i)
         transf = vo.get_pose(q1, q2)
+        extrinsics.append(np.linalg.inv(transf))
         cur_pose = cur_pose @ np.linalg.inv(transf)
-        estimated_path.append((cur_pose[0, 3], cur_pose[2, 3]))
+        est_path.append([cur_pose[1, 3], cur_pose[0, 3], cur_pose[2, 3]])
 
-    #plotting.visualize_paths(
-    #            gt_path, estimated_path, "Visual Odometry", 
-    #            file_out=os.path.basename(data_dir)+".html"
-    #        )
+    est_path = np.array(est_path)
+    cv2.destroyAllWindows()
+
+    #save extrinsic matricces into file
+    np.save("egomotion.npy", np.array(extrinsics, dtype=object), allow_pickle=True)
+
+    #plot path
+    fig = plt.axes(projection='3d')
+    fig.plot3D(est_path[:, 0], est_path[:, 1], est_path[:, 2])
+    plt.show()

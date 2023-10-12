@@ -58,7 +58,8 @@ def calibrate_camera(H, W, red_fac, images):
     #           "distortion": dist.to_list()}
     #with open("calib.json", "w") as file:
     #    json.dump(out_dct, file)
-    pickle.dump((CameraMatrix, dist), open("calib.pkl", "wb"))
+    with open("calib.pkl", "wb") as file:
+        pickle.dump((H, W, red_fac, CameraMatrix, dist), file)
 
     #reprojection error
     mean_error = 0
@@ -73,9 +74,9 @@ def calibrate_camera(H, W, red_fac, images):
 
 def load_calibration(file_name):
     with open(file_name, "rb") as file:
-        CameraMatrix, dist = pickle.load(file)
+        height, width, red_fac, CameraMatrix, dist = pickle.load(file)
 
-    return CameraMatrix, dist
+    return height, width, red_fac, CameraMatrix, dist
 
 
 def undistort_image(img_in, CameraMatrix, dist):
@@ -90,11 +91,12 @@ def undistort_image(img_in, CameraMatrix, dist):
     return img_out
 
 
-def test_undistort(red_fac):
+def test_undistort():
+    _, _, red_fac, CameraMatrix, dist = load_calibration("calib.pkl")
+
     img1 = cv2.imread("images/sfm2/20231008_230707.jpg")
     img1 = DownSampleImage(img1, red_fac)
 
-    CameraMatrix, dist = load_calibration("calib.pkl")
     img2 = undistort_image(img1, CameraMatrix, dist)
 
     cv2.imwrite("calibrated.png", img2)
@@ -109,4 +111,4 @@ if __name__ == "__main__":
 
     print("reprojection error: {}\n".format(reproj_error))
 
-    test_undistort(red_fac)
+    test_undistort()
