@@ -10,7 +10,8 @@ from calibration import DownSampleImage, undistort_image
 
 
 class VisualOdometry():
-    def __init__(self):
+    def __init__(self, display_matches=False):
+        self.dismat = display_matches
         self.H, self.W, self.rf, self.K, self.dp = self._load_calib("calib.pkl")
         self.images = self._load_images("images/sfm_test")
         self.orb = cv2.ORB_create(3000)
@@ -115,15 +116,16 @@ class VisualOdometry():
         except ValueError:
             pass
 
-        draw_params = dict(matchColor = -1, #draw matches in green color
+        if self.dismat:
+            draw_params = dict(matchColor = -1, #draw matches in green color
                  singlePointColor = None,
                  matchesMask = None, #draw only inliers
                  flags = 2)
 
-        img3 = cv2.drawMatches(self.images[i], kp1, self.images[i-1], 
+            img3 = cv2.drawMatches(self.images[i], kp1, self.images[i-1], 
                                kp2, good ,None,**draw_params)
-        cv2.imshow("image", img3)
-        cv2.waitKey(200)
+            cv2.imshow("image", img3)
+            cv2.waitKey(200)
 
         # Get the image points form the good matches
         q1 = np.float32([kp1[m.queryIdx].pt for m in good])
@@ -136,8 +138,8 @@ class VisualOdometry():
 
         Parameters
         ----------
-        q1 (ndarray): The good keypoints matches position in i-1'th image
-        q2 (ndarray): The good keypoints matches position in i'th image
+        q1 (ndarray): good keypoint matches in i-1'th image
+        q2 (ndarray): good keypoint matches in i'th image
 
         Returns
         -------
@@ -160,8 +162,8 @@ class VisualOdometry():
         Parameters
         ----------
         E (ndarray): Essential matrix
-        q1 (ndarray): The good keypoints matches position in i-1'th image
-        q2 (ndarray): The good keypoints matches position in i'th image
+        q1 (ndarray): good keypoint matches in i-1'th image
+        q2 (ndarray): good keypoint matches in i'th image
 
         Returns
         -------
@@ -220,7 +222,7 @@ class VisualOdometry():
 
 
 if __name__ == "__main__":
-    vo = VisualOdometry()
+    vo = VisualOdometry(True)
 
     #play_trip(vo.images)  # Comment out to not play the trip
 

@@ -16,6 +16,42 @@ def DownSampleImage(image, reduction_factor):
     return image
 
 
+class Calibration():
+    def __init__(self, intrinsic=np.eye(3), dist=None,
+                 height=0, width=0, reduction_factor=0):
+        self.CameraMatrix = intrinsic
+        self.DisParams = dist
+        self.height = height
+        self.width = width
+        self.RedFac = reduction_factor
+
+    def load(self, file_name):
+        with open(file_name, "rb") as file:
+            h, w, rf, intrinsic, dist = pickle.load(file)
+
+        self.CameraMatrix = intrinsic
+        self.DisParams = dist
+        self.height = h
+        self.width = w
+        self.RedFac = rf
+
+    def save(self, file_name):
+        with open(file_name, "wb") as file:
+            pickle.dump((self.height, self.width, self.RedFac,
+                         self.CameraMatrix, self.DisParams), file)
+
+    def undistort(img_in):
+        h, w = img_in.shape[:2]
+
+        NewCameraMatrix, roi = cv2.getOptimalNewCameraMatrix(self.CameraMatrix, dist, (w,h), 1, (w,h))
+        img_out = cv2.undistort(img_in, self.CameraMatrix, self.DisParams,
+                                None, NewCameraMatrix)
+
+        x, y, w, h = roi
+        img_out = img_out[y:y+h, x:x+w]
+
+        return img_out
+
 
 def calibrate_camera(H, W, red_fac, images):
     #termination criteria
@@ -54,10 +90,6 @@ def calibrate_camera(H, W, red_fac, images):
     ret, CameraMatrix, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, gray.shape[::-1], None, None)
 
     #save calibration results
-    #out_dct = {"intrinsic": CameraMatrix.to_list(),
-    #           "distortion": dist.to_list()}
-    #with open("calib.json", "w") as file:
-    #    json.dump(out_dct, file)
     with open("calib.pkl", "wb") as file:
         pickle.dump((H, W, red_fac, CameraMatrix, dist), file)
 
