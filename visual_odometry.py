@@ -6,41 +6,20 @@ from tqdm import tqdm
 
 import matplotlib.pyplot as plt
 
-from calibration import DownSampleImage, undistort_image
+from calibration import Calibration, DownSampleImage
 
 
 class VisualOdometry():
     def __init__(self, display_matches=False):
         self.dismat = display_matches
-        self.H, self.W, self.rf, self.K, self.dp = self._load_calib("calib.pkl")
+        self.CamCal = Calibration()
+        self.CamCal.load("calib.pkl")
         self.images = self._load_images("images/sfm_test")
         self.orb = cv2.ORB_create(3000)
         FLANN_INDEX_LSH = 6
         index_params = dict(algorithm=FLANN_INDEX_LSH, table_number=6, key_size=12, multi_probe_level=1)
         search_params = dict(checks=50)
         self.flann = cv2.FlannBasedMatcher(indexParams=index_params, searchParams=search_params)
-
-    @staticmethod
-    def _load_calib(filepath: str):
-        """
-        Loads camera calibration file
-
-        Parameters
-        ----------
-        filepath (str): path to the camera file
-
-        Returns
-        -------
-        height (int): image height
-        width (int): image width
-        red_fac (int): reduction factor for downsampling images
-        CameraMatrix (ndarray): intrinsic parameters
-        dist (ndarray): distortion parameters
-        """
-        with open(filepath, 'rb') as file:
-            height, width, red_fac, CameraMatrix, dist = pickle.load(file)
-
-        return height, width, red_fac, CameraMatrix, dist
 
     def _load_images(self, filepath: str):
         """
@@ -59,8 +38,8 @@ class VisualOdometry():
         for file in sorted(os.listdir(filepath)):
             path = os.path.join(filepath, file)
             img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-            img = DownSampleImage(img, self.rf)
-            img = undistort_image(img, self.K, self.dp)
+            img = DownSampleImage(img, self.CamCal.RedFac)
+            img = self.CamCal.undistort(img)
             images.append(img)
 
         return images
@@ -146,7 +125,7 @@ class VisualOdometry():
         transformation_matrix (ndarray): The transformation matrix
         """
         # Essential matrix
-        E, _ = cv2.findEssentialMat(q1, q2, self.K, threshold=1)
+        E, _ = cv2.findEssentialMat(q1, q2, self.CamCal.CameraMatrix, threshold=1)
 
         # Decompose the Essential matrix into R and t
         R, t = self.decomp_essential_mat(E, q1, q2)
@@ -173,7 +152,7 @@ class VisualOdometry():
             #Get the transformation matrix
             T = self._form_transf(R, t)
             #Make the projection matrix
-            ProMat = np.concatenate((self.K, np.zeros((3, 1))), axis=1)
+            ProMat = np.concatenate((self.CamCal.CameraMatrix, np.zeros((3, 1))), axis=1)
             P = ProMat @ T
 
             #Triangulate the 3D points
@@ -234,7 +213,7 @@ if __name__ == "__main__":
         transf = vo.get_pose(q1, q2)
         extrinsics.append(np.linalg.inv(transf))
         cur_pose = cur_pose @ np.linalg.inv(transf)
-        est_path.append([cur_pose[1, 3], cur_pose[0, 3], cur_pose[2, 3]])
+        est_path.append([cur_pose[0, 3], cur_pose[1, 3], cur_pose[2, 3]])
 
     est_path = np.array(est_path)
     cv2.destroyAllWindows()
@@ -244,5 +223,5 @@ if __name__ == "__main__":
 
     #plot path
     fig = plt.axes(projection='3d')
-    fig.plot3D(est_path[:, 0], est_path[:, 1], est_path[:, 2])
+    fig.plot3D(est_path[:, 1], est_path[:, 0], est_path[:, 2])
     plt.show()
