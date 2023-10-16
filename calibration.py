@@ -18,41 +18,54 @@ def DownSampleImage(image, reduction_factor):
 
 class Calibration():
     def __init__(self, intrinsic=None, dist=None,
-                 height=0, width=0, reduction_factor=0):
-        self.CameraMatrix = intrinsic
+                 size=None, reduction_factor=0):
+        self.OrigCameraMatrix = intrinsic
         self.DisParams = dist
-        self.height = height
-        self.width = width
+        self.OrigSize = size
         self.RedFac = reduction_factor
-        self.OptCameraMatrix = None
+        self.CameraMatrix = None
+        self.Crop = None
+        self.Size = None
+        if (intrinsic is not None) and (dist is not None) and (size is not None):
+            self.CameraMatrix, roi = self._opt_camera_matrix(intrinsic, dist, size)
+            self.Crop = roi[:2]
+            self.Size = roi[:-3:-1]
 
     @staticmethod
-    def _opt_camera_matrix():
-        pass
+    def _opt_camera_matrix(intrinsic, dist, size):
+        h, w = size
+        CameraMatrix, roi = cv2.getOptimalNewCameraMatrix(intrinsic, dist, (w,h), 1, (w,h))
+
+        return CameraMatrix, roi
 
     def load(self, file_name):
         with open(file_name, "rb") as file:
             h, w, rf, intrinsic, dist = pickle.load(file)
 
-        self.CameraMatrix = intrinsic
+        self.OrigCameraMatrix = intrinsic
         self.DisParams = dist
-        self.height = h
-        self.width = w
+        self.OrigSize = (h, w)
         self.RedFac = rf
+
+        self.CameraMatrix, roi = self._opt_camera_matrix(intrinsic, dist, (h, w))
+        self.Crop = roi[:2]
+        self.Size = roi[:-3:-1]
 
     def save(self, file_name):
         with open(file_name, "wb") as file:
-            pickle.dump((self.height, self.width, self.RedFac,
+            pickle.dump((self.OrigSize[0], self.OrigSize[1], self.RedFac,
                          self.CameraMatrix, self.DisParams), file)
 
     def undistort(self, img_in):
         h, w = img_in.shape[:2]
+        if h!=self.OrigSize[0] and w!=self.OrigSize[1]:
+            raise SystemExit('size mismatch between input image and calibration images')
 
-        NewCameraMatrix, roi = cv2.getOptimalNewCameraMatrix(self.CameraMatrix, self.DisParams, (w,h), 1, (w,h))
-        img_out = cv2.undistort(img_in, self.CameraMatrix, self.DisParams,
-                                None, NewCameraMatrix)
+        img_out = cv2.undistort(img_in, self.OrigCameraMatrix, self.DisParams,
+                                None, self.CameraMatrix)
 
-        x, y, w, h = roi
+        x, y = self.Crop
+        h, w = self.Size
         img_out = img_out[y:y+h, x:x+w]
 
         return img_out
@@ -100,11 +113,8 @@ def calibrate_camera(board_size, red_fac, images):
 
     CamCal = Calibration(intrinsic=CameraMatrix,
                          dist=dist,
-                         #size=(H, W),
+                         size=img.shape[:2],
                          reduction_factor=red_fac)
-
-    #save calibration results
-    #CamCal.save("calib.pkl")
 
     #reprojection error
     mean_error = 0
@@ -117,40 +127,18 @@ def calibrate_camera(board_size, red_fac, images):
     mean_error/=len(objpoints)
 
     print("Calibration successful")
-    print("Reprojection error: {mean_error}")
+    print(f"Reprojection error: {mean_error}")
 
     return CamCal
-
-
-def load_calibration(file_name):
-    with open(file_name, "rb") as file:
-        height, width, red_fac, CameraMatrix, dist = pickle.load(file)
-
-    return height, width, red_fac, CameraMatrix, dist
-
-
-def undistort_image(img_in, CameraMatrix, dist):
-    h, w = img_in.shape[:2]
-
-    NewCameraMatrix, roi = cv2.getOptimalNewCameraMatrix(CameraMatrix, dist, (w,h), 1, (w,h))
-    img_out = cv2.undistort(img_in, CameraMatrix, dist, None, NewCameraMatrix)
-
-    x, y, w, h = roi
-    img_out = img_out[y:y+h, x:x+w]
-
-    return img_out
 
 
 def test_undistort():
     CamCal = Calibration()
     CamCal.load("calib.pkl")
 
-    #_, _, red_fac, CameraMatrix, dist = load_calibration("calib.pkl")
-
     img1 = cv2.imread("images/sfm_test/20231008_230707.jpg")
     img1 = DownSampleImage(img1, CamCal.RedFac)
 
-    #img2 = undistort_image(img1, CameraMatrix, dist)
     img2 = CamCal.undistort(img1)
 
     cv2.imwrite("calibrated.png", img2)
@@ -160,9 +148,6 @@ if __name__ == "__main__":
     H, W = 8, 6
     red_fac = 2
     images = glob.glob("images/calibration/*.jpg")
-
-    #reproj_error = calibrate_camera(board_size=(H, W), red_fac=red_fac, images=images)
-    #print("reprojection error: {}\n".format(reproj_error))
 
     CamCal = calibrate_camera(board_size=(H, W), red_fac=red_fac, images=images)
 
