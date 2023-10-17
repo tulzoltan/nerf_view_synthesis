@@ -219,7 +219,7 @@ if __name__ == "__main__":
     cv2.destroyAllWindows()
 
     #save extrinsic matricces into file
-    np.save("egomotion.npy", np.array(extrinsics, dtype=object), allow_pickle=True)
+    np.save("egomotion.npy", np.array(extrinsics), allow_pickle=True)
 
     #plot path
     fig = plt.axes(projection='3d')

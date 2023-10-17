@@ -141,7 +141,14 @@ def test_undistort():
 
     img2 = CamCal.undistort(img1)
 
-    cv2.imwrite("calibrated.png", img2)
+    #cv2.imwrite("calibrated.png", img2)
+    import matplotlib.pyplot as plt
+    f, ax = plt.subplots(1, 2)
+    ax[0].imshow(img1[:,:,::-1])
+    ax[0].set_title("raw image")
+    ax[1].imshow(img2[:,:,::-1])
+    ax[1].set_title("undistorted image")
+    plt.show()
 
 
 if __name__ == "__main__":
