@@ -6,44 +6,19 @@ from tqdm import tqdm
 
 import matplotlib.pyplot as plt
 
-from calibration import Calibration, DownSampleImage
+from calibration import Calibration, ImageLoader
 
 
 class VisualOdometry():
-    def __init__(self, display_matches=False):
+    def __init__(self, CamCal, images, display_matches=False):
         self.dismat = display_matches
-        self.CamCal = Calibration()
-        self.CamCal.load("calib.pkl")
-        self.images = self._load_images("images/sfm_test")
+        self.CamCal = CamCal
+        self.images = images
         self.orb = cv2.ORB_create(3000)
         FLANN_INDEX_LSH = 6
         index_params = dict(algorithm=FLANN_INDEX_LSH, table_number=6, key_size=12, multi_probe_level=1)
         search_params = dict(checks=50)
         self.flann = cv2.FlannBasedMatcher(indexParams=index_params, searchParams=search_params)
-
-    def _load_images(self, filepath: str):
-        """
-        Loads the images
-
-        Parameters
-        ----------
-        filepath (str): path to image directory
-
-        Returns
-        -------
-        images (list): grayscale images
-        """
-        images = []
-
-        for file in sorted(os.listdir(filepath)):
-            path = os.path.join(filepath, file)
-            img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-            img = DownSampleImage(img, self.CamCal.RedFac)
-            img = self.CamCal.undistort(img)
-            images.append(img)
-
-        return images
-
 
     @staticmethod
     def _form_transf(R, t):
@@ -201,25 +176,31 @@ class VisualOdometry():
 
 
 if __name__ == "__main__":
-    vo = VisualOdometry(True)
+    #load calibration data
+    CamCal = Calibration()
+    CamCal.load("calib.pkl")
 
-    #play_trip(vo.images)  # Comment out to not play the trip
+    #get images
+    dataset = ImageLoader(directory="images/sfm_test",
+                          CamCal=CamCal,
+                          grayscale=True)
+
+    vo = VisualOdometry(CamCal=CamCal,
+                        images=dataset,
+                        display_matches=True)
 
     est_path = []
-    cur_pose = np.eye(4)
-    extrinsics = []
     for i in tqdm(range(len(vo.images))):
-        q1, q2 = vo.get_matches(i)
-        transf = vo.get_pose(q1, q2)
-        extrinsics.append(np.linalg.inv(transf))
-        cur_pose = cur_pose @ np.linalg.inv(transf)
+        if i == 0:
+            cur_pose = np.eye(4)
+        else:
+            q1, q2 = vo.get_matches(i)
+            transf = vo.get_pose(q1, q2)
+            cur_pose = cur_pose @ np.linalg.inv(transf)
         est_path.append([cur_pose[0, 3], cur_pose[1, 3], cur_pose[2, 3]])
 
     est_path = np.array(est_path)
     cv2.destroyAllWindows()
-
-    #save extrinsic matricces into file
-    np.save("egomotion.npy", np.array(extrinsics), allow_pickle=True)
 
     #plot path
     fig = plt.axes(projection='3d')

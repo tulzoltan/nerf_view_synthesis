@@ -1,10 +1,11 @@
 import cv2
+import os
 import glob
 import numpy as np
 import pickle
 
 
-def DownSampleImage(image, reduction_factor):
+def DownSampleImage(image: np.array, reduction_factor: int) -> np.array:
     """
     Downsample image reduction_factor number of times
     """
@@ -17,8 +18,11 @@ def DownSampleImage(image, reduction_factor):
 
 
 class Calibration():
-    def __init__(self, intrinsic=None, dist=None,
-                 size=None, reduction_factor=0):
+    def __init__(self,
+                 intrinsic=None,
+                 dist=None,
+                 size=None,
+                 reduction_factor: int=0):
         self.OrigCameraMatrix = intrinsic
         self.DisParams = dist
         self.OrigSize = size
@@ -38,7 +42,7 @@ class Calibration():
 
         return CameraMatrix, roi
 
-    def load(self, file_name):
+    def load(self, file_name: str) -> None:
         with open(file_name, "rb") as file:
             h, w, rf, intrinsic, dist = pickle.load(file)
 
@@ -51,12 +55,12 @@ class Calibration():
         self.Crop = roi[:2]
         self.Size = roi[:-3:-1]
 
-    def save(self, file_name):
+    def save(self, file_name: str) -> None:
         with open(file_name, "wb") as file:
             pickle.dump((self.OrigSize[0], self.OrigSize[1], self.RedFac,
                          self.CameraMatrix, self.DisParams), file)
 
-    def undistort(self, img_in):
+    def undistort(self, img_in: np.array) -> np.array:
         h, w = img_in.shape[:2]
         if h!=self.OrigSize[0] and w!=self.OrigSize[1]:
             raise SystemExit('size mismatch between input image and calibration images')
@@ -71,7 +75,36 @@ class Calibration():
         return img_out
 
 
-def calibrate_camera(board_size, red_fac, images):
+class ImageLoader():
+    def __init__(self,
+                 directory: str,
+                 CamCal: Calibration,
+                 normalize: bool = False,
+                 grayscale: bool = True):
+        self.file_names = sorted(glob.glob(os.path.join(directory, "*.jpg")))
+        self.CamCal = CamCal
+        self.normalize = normalize
+        self.grayscale = grayscale
+
+    def __len__(self) -> int:
+        return len(self.file_names)
+
+    def __getitem__(self, i: int) -> np.array:
+        if self.grayscale:
+            img = cv2.imread(self.file_names[i], cv2.IMREAD_GRAYSCALE)
+        else:
+            img = cv2.imread(self.file_names[i])
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = DownSampleImage(img, self.CamCal.RedFac)
+        img = self.CamCal.undistort(img)
+        if self.normalize:
+            img = cv2.normalize(img, None, 0, 1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        return img
+
+
+def calibrate_camera(board_size,
+                     red_fac: int,
+                     images) -> Calibration:
     #termination criteria
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
@@ -133,6 +166,8 @@ def calibrate_camera(board_size, red_fac, images):
 
 
 def test_undistort():
+    import matplotlib.pyplot as plt
+    
     CamCal = Calibration()
     CamCal.load("calib.pkl")
 
@@ -141,8 +176,6 @@ def test_undistort():
 
     img2 = CamCal.undistort(img1)
 
-    #cv2.imwrite("calibrated.png", img2)
-    import matplotlib.pyplot as plt
     f, ax = plt.subplots(1, 2)
     ax[0].imshow(img1[:,:,::-1])
     ax[0].set_title("raw image")
