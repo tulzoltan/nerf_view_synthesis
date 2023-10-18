@@ -5,5 +5,5 @@ python calibration.py
 ```
 
 ```
-python visual_odometry.py
+python process_images.py
 ```
