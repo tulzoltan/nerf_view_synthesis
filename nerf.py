@@ -154,7 +154,7 @@ def train(nerf_model, optimizer, scheduler, data_loader, device='cpu', hn=0, hf=
     training_loss = []
     count = 0
     for _ in tqdm(range(epochs)):
-        for batch in data_loader:
+        for batch in tqdm(data_loader):
             ray_oris = batch[:,  :3].to(device)
             ray_dirs = batch[:, 3:6].to(device)
             ground_truth_px_vals = batch[:, 6:].to(device)
@@ -198,7 +198,7 @@ def test(model, hn, hf, dataset, plot_name, H, W, device='cpu', chunk_size=10, i
     ray_oris = dataset[img_index*H*W: (img_index+1)*H*W,  :3]
     ray_dirs = dataset[img_index*H*W: (img_index+1)*H*W, 3:6]
 
-    orimg = dataset[img_index*H*W, (img_index+1)*H*W, 6:].reshape(H, W, 3)
+    orimg = dataset[img_index*H*W: (img_index+1)*H*W, 6:].reshape(H, W, 3)
 
     data = []
     for i in range(int(np.ceil(H/chunk_size))):
@@ -213,12 +213,11 @@ def test(model, hn, hf, dataset, plot_name, H, W, device='cpu', chunk_size=10, i
     f, ax = plt.subplots(2, 1)
     ax[0].imshow(img)
     ax[1].imshow(orimg)
-    plot_name = f"novel_views/img_{img_index}_N{hn}_F{hf}.png"
     plt.savefig(plot_name, bbox_inches="tight")
     plt.close()
 
 
-def set_path(new_dir: str, root: str = os.getcwd()) -> str:
+def get_path(new_dir: str, root: str = os.getcwd()) -> str:
     new_path = os.path.join(root, new_dir)
 
     if not os.path.exists(new_path):
@@ -247,6 +246,7 @@ if __name__ == "__main__":
     NEAR = 2
     FAR = 6
 
+    Qtrain = True
     Qload = False
     save_name =  f"BASE_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
     load_name = f"BASE_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
@@ -260,6 +260,12 @@ if __name__ == "__main__":
                              batch_size=BATCH_SIZE,
                              shuffle=True)
 
+    #set up NN model
+    print("Loading neural network ...")
+    model = NerfModel(hidden_dim=HIDDEN_DIM).to(DEVICE)
+    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[2, 4, 8], gamma=0.5)
+
     #load weights if requested
     def load_checkpoint(checkpoint):
         model.load_state_dict(checkpoint["state_dict"])
@@ -271,41 +277,39 @@ if __name__ == "__main__":
         if os.path.exists(load_file):
             load_checkpoint(torch.load(load_file))
 
-    #set up NN model
-    print("Loading neural network ...")
-    model = NerfModel(hidden_dim=HIDDEN_DIM).to(DEVICE)
-    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[2, 4, 8], gamma=0.5)
-
     #train model
-    print("Commencing training ...")
-    loss = train(model, optimizer, scheduler, data_loader,
-                 epochs=EPOCHS, device=DEVICE, hn=NEAR, hf=FAR,
-                 n_bins=NUM_BINS, H=HEIGHT, W=WIDTH)
+    if Qtrain:
+        print("Commencing training ...")
+        loss = train(model, optimizer, scheduler, data_loader,
+                     epochs=EPOCHS, device=DEVICE, hn=NEAR, hf=FAR,
+                     n_bins=NUM_BINS, H=HEIGHT, W=WIDTH)
 
-    #save progress
-    save_file = os.path.join(wgt_dir, save_name + ".pth.tar")
-    checkpoint = {"state_dict": model.state_dict(),
-                  "optimizer": optimizer.state_dict(),
-                  "scheduler": scheduler.state_dict()}
-    torch.save(checkpoint)
+        #save progress
+        save_file = os.path.join(wgt_dir, save_name + ".pth.tar")
+        checkpoint = {"state_dict": model.state_dict(),
+                      "optimizer": optimizer.state_dict(),
+                      "scheduler": scheduler.state_dict()}
+        torch.save(checkpoint, save_file)
 
-    plt.figure()
-    plt.plot(loss)
-    if Qload:
-        plt.title(f"Loss in {EPOCHS} epochs")
-    elif EPOCHS > 1:
-        plt.title(f"Loss in first {EPOCH} epochs")
+        plt.figure()
+        plt.plot(loss)
+        if Qload:
+            plt.title(f"Loss in {EPOCHS} epochs")
+        elif EPOCHS > 1:
+            plt.title(f"Loss in first {EPOCH} epochs")
+        else:
+            plt.title(f"Loss in first epoch")
+        fig_name = os.path.join(out_dir, save_name + (f"loss_EP{EPOCHS}"))
+        plt.savefig(fig_name, bbox_inches='tight')
+        plt.close()
+
     else:
-        plt.title(f"Loss in first epoch")
-    fig_name = os.path.join(out_dir, save_name + (f"loss_EP{EPOCHS}"))
-    plt.savefig(fig_name, bbox_inches='tight')
-    plt.close()
+        print("Skipping training")
 
     #test model
     print("Testing ...")
     test_name = os.path.join(out_dir, save_name + "test_image.png")
     for img_index in tqdm(range(1)):
-        test(model, hn=NEAR, hf=FAR, dataset=test_dataset,
+        test(model, hn=NEAR, hf=FAR, dataset=train_dataset,
              plot_name=test_name, device=DEVICE, img_index=img_index,
              n_bins=NUM_BINS, H=HEIGHT, W=WIDTH)
