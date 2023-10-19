@@ -7,3 +7,7 @@ python calibration.py
 ```
 python process_images.py
 ```
+
+```
+python nerf.py
+```
