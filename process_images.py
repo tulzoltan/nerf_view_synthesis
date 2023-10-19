@@ -57,7 +57,7 @@ def format_pixel_data(CamCal: Calibration,
     rays = RayMaker(width=W, height=H, intrinsic=CamCal.CameraMatrix)
 
     dataset = np.empty((len(images)*H*W, 9), dtype=np.float32)
-    for ind in range(len(images)):
+    for ind in tqdm(range(len(images))):
         img = images[ind]
         ext = trajectory[ind]
 
@@ -74,7 +74,7 @@ def format_pixel_data(CamCal: Calibration,
     with open(output_name, "wb") as file:
         pickle.dump(dataset, file)
 
-    print(f"images saved to {output_name}")
+    print(f"{len(images)} images saved to {output_name}")
     print(f"number of pixels: {len(dataset)}")
 
 
@@ -106,7 +106,41 @@ def process(CamCal: Calibration,
     images.normalize=True
 
     print("Processing images...")
-    format_pixel_data(CamCal, trajectory, images, output_name)
+    H, W = CamCal.Size
+
+    #Make rays
+    rays = RayMaker(width=W, height=H, intrinsic=CamCal.CameraMatrix)
+
+    dataset = np.empty((len(images)*H*W, 9), dtype=np.float32)
+    for ind in tqdm(range(len(images))):
+        img = images[ind]
+        ext = trajectory[ind]
+
+        #get ray origins and directions
+        ray_oris, ray_dirs = rays.make(ext)
+
+        #combine ray and pixel data
+        pixels = np.hstack([ray_oris.reshape(-1, 3),
+                            ray_dirs.reshape(-1, 3),
+                            img.reshape(-1, 3)])
+
+        dataset[ind*H*W: (ind+1)*H*W] = pixels
+
+    with open(output_name, "wb") as datafile:
+        pickle.dump(dataset, datafile)
+
+    metadata = {"width": W,
+                "height": H,
+                "focal_x": CamCal.CameraMatrix[0, 0],
+                "focal_y": CamCal.CameraMatrix[1, 1],
+                "reduction_factor": CamCal.RedFac,
+                "number_of_images": len(images)}
+
+    with open("metadata.json", "w") as metafile:
+        json.dump(metadata, metafile)
+
+    print(f"{len(images)} images saved to {output_name}")
+    #print(f"number of pixels: {len(dataset)}")
 
 
 def test_images(file_name, H, W, index=0):
@@ -130,10 +164,10 @@ if __name__ == "__main__":
     CamCal.load("calib.pkl")
 
     #process test images
-    out_name = "test_processing.pkl"
+    out_name = "training_data.pkl"
     process(CamCal=CamCal,
-            image_directory="images/sfm_test",
-            output_name="test_processing.pkl")
+            image_directory="images/sequence1",
+            output_name=out_name)
 
     #check processed test images
-    test_images(out_name, CamCal.Size[0], CamCal.Size[1])
+    test_images(out_name, CamCal.Size[0], CamCal.Size[1], index=2)

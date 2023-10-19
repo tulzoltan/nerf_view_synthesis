@@ -1,3 +1,5 @@
+import os
+import json
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -135,7 +137,7 @@ def render_rays(nerf_model, ray_oris, ray_dirs, hn=0, hf=0.5, n_bins=192):
 def train(nerf_model, optimizer, scheduler, data_loader, device='cpu', hn=0, hf=1, epochs=int(1e5), n_bins=192, H=400, W=400):
     """
     Parameters:
-        nerf_model: the model that is to be trained
+        nerf_model: NN model to be trained
         optimizer: optimizer used for training
         scheduler: learning rate scheduler
         data_loader: object that handles training data
@@ -144,15 +146,14 @@ def train(nerf_model, optimizer, scheduler, data_loader, device='cpu', hn=0, hf=
         hf: distance from far cropping plane
         epochs: number of training epochs
         n_bins: number of bins used for density estimation
-        H: image height
-        W: image width
 
     Returns:
         training_loss: training loss for each epoch
     """
 
     training_loss = []
-    for ind in tqdm(range(epochs)):
+    count = 0
+    for _ in tqdm(range(epochs)):
         for batch in data_loader:
             ray_oris = batch[:,  :3].to(device)
             ray_dirs = batch[:, 3:6].to(device)
@@ -167,28 +168,37 @@ def train(nerf_model, optimizer, scheduler, data_loader, device='cpu', hn=0, hf=
             loss.backward()
             optimizer.step()
             training_loss.append(loss.item())
+
+            count += 1
+            if count == 100:
+                plt.plot(training_loss)
+                plt.show()
+                plt.close()
         scheduler.step()
 
     return training_loss
 
 
 @torch.no_grad()
-def test(hn, hf, dataset, out_dir, device='cpu', chunk_size=10, img_index=0, n_bins=192, H=400, W=400):
+def test(model, hn, hf, dataset, plot_name, H, W, device='cpu', chunk_size=10, img_index=0, n_bins=192):
     """
     Parameters:
+        model: trained model
         hn: distance from near plane
         hf: distance from far plane
         dataset: ray origins and directions for generating new views
-        out_dir: directory for saving files
+        plot_name: full path to figure
+        H: image height
+        W: image width
         device: device to be used for testing (gpu or cpu)
         chunk_size: separate image into chunks for memory efficiency
         img_index: image index to render
         n_bins: number of bins for density estimation
-        H: image height
-        W: image width
     """
     ray_oris = dataset[img_index*H*W: (img_index+1)*H*W,  :3]
     ray_dirs = dataset[img_index*H*W: (img_index+1)*H*W, 3:6]
+
+    orimg = dataset[img_index*H*W, (img_index+1)*H*W, 6:].reshape(H, W, 3)
 
     data = []
     for i in range(int(np.ceil(H/chunk_size))):
@@ -200,60 +210,102 @@ def test(hn, hf, dataset, out_dir, device='cpu', chunk_size=10, img_index=0, n_b
         data.append(regenerated_px_vals)
 
     img = torch.cat(data).data.cpu().numpy().reshape(H, W, 3)
-    plt.figure()
-    plt.imshow(img)
-    plt.savefig(f"novel_views/img_{img_index}_N{hn}_F{hf}.png", bbox_inches="tight")
+    f, ax = plt.subplots(2, 1)
+    ax[0].imshow(img)
+    ax[1].imshow(orimg)
+    plot_name = f"novel_views/img_{img_index}_N{hn}_F{hf}.png"
+    plt.savefig(plot_name, bbox_inches="tight")
     plt.close()
 
 
-if __name__ == "__main__":
-    import os
+def set_path(new_dir: str, root: str = os.getcwd()) -> str:
+    new_path = os.path.join(root, new_dir)
 
-    output_dir = os.path.join(os.getcwd(), "novel_views")
-    if not os.path.exists(output_dir):
-        os.mkdir(output_dir)
+    if not os.path.exists(new_path):
+        os.mkdir(new_path)
+
+    return new_path
+
+
+if __name__ == "__main__":
+
+    #set directories
+    out_dir = get_path("novel_views")
+    wgt_dir = get_path("weights")
+
+    #get metadata
+    metadata = json.load(open("metadata.json"))
 
     #parameters
     DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    HIDDEN_DIM = 32 #256 #1st
-    HEIGHT = 400
-    WIDTH = 400
+    HIDDEN_DIM = 32 #256
+    HEIGHT = metadata["height"]
+    WIDTH = metadata["width"]
     BATCH_SIZE = 1024
-    NUM_BINS = 48 #192 #2nd
-    EPOCHS = 1 #16 #3rd
+    NUM_BINS = 48 #192
+    EPOCHS = 1 #16
     NEAR = 2
     FAR = 6
+
+    Qload = False
+    save_name =  f"BASE_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
+    load_name = f"BASE_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
 
     #load data
     print("Loading datasets ...")
     train_dataset = torch.from_numpy(
                         np.load("training_data.pkl",
                             allow_pickle=True))
-    #test_dataset = torch.from_numpy(
-    #                np.load("testing_data.pkl",
-    #                    allow_pickle=True)[:HEIGHT*WIDTH*20])
     data_loader = DataLoader(train_dataset,
                              batch_size=BATCH_SIZE,
                              shuffle=True)
 
+    #load weights if requested
+    def load_checkpoint(checkpoint):
+        model.load_state_dict(checkpoint["state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        scheduler.load_state_dict(checkpoint["scheduler"])
+
+    if Qload:
+        load_file = os.path.join(wgt_dir, load_name + ".pth.tar")
+        if os.path.exists(load_file):
+            load_checkpoint(torch.load(load_file))
+
     #set up NN model
     print("Loading neural network ...")
     model = NerfModel(hidden_dim=HIDDEN_DIM).to(DEVICE)
-    model_optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(model_optimizer, milestones=[2, 4, 8], gamma=0.5)
+    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[2, 4, 8], gamma=0.5)
 
     #train model
     print("Commencing training ...")
-    loss = train(model, model_optimizer, scheduler, data_loader,
+    loss = train(model, optimizer, scheduler, data_loader,
                  epochs=EPOCHS, device=DEVICE, hn=NEAR, hf=FAR,
                  n_bins=NUM_BINS, H=HEIGHT, W=WIDTH)
 
+    #save progress
+    save_file = os.path.join(wgt_dir, save_name + ".pth.tar")
+    checkpoint = {"state_dict": model.state_dict(),
+                  "optimizer": optimizer.state_dict(),
+                  "scheduler": scheduler.state_dict()}
+    torch.save(checkpoint)
+
+    plt.figure()
     plt.plot(loss)
-    plt.show()
+    if Qload:
+        plt.title(f"Loss in {EPOCHS} epochs")
+    elif EPOCHS > 1:
+        plt.title(f"Loss in first {EPOCH} epochs")
+    else:
+        plt.title(f"Loss in first epoch")
+    fig_name = os.path.join(out_dir, save_name + (f"loss_EP{EPOCHS}"))
+    plt.savefig(fig_name, bbox_inches='tight')
+    plt.close()
 
     #test model
     print("Testing ...")
-    for img_index in tqdm(range(5)):
-        test(hn=NEAR, hf=FAR, dataset=test_dataset, out_dir=output_dir,
-                device=DEVICE, img_index=img_index, n_bins=NUM_BINS,
-                H=HEIGHT, W=WIDTH)
+    test_name = os.path.join(out_dir, save_name + "test_image.png")
+    for img_index in tqdm(range(1)):
+        test(model, hn=NEAR, hf=FAR, dataset=test_dataset,
+             plot_name=test_name, device=DEVICE, img_index=img_index,
+             n_bins=NUM_BINS, H=HEIGHT, W=WIDTH)
