@@ -175,6 +175,30 @@ class VisualOdometry():
         return [R1, t]
 
 
+def estimate_egomotion(CamCal: Calibration,
+                       images,
+                       display_matches: bool = False):
+    #get egomotion data
+    vo = VisualOdometry(CamCal=CamCal,
+                        images=images,
+                        display_matches=display_matches)
+
+    trajectory = []
+    for i in tqdm(range(len(vo.images))):
+        if i == 0:
+            cur_pose = np.eye(4)
+        else:
+            q1, q2 = vo.get_matches(i)
+            transf = vo.get_pose(q1, q2)
+            cur_pose = cur_pose @ np.linalg.inv(transf)
+        trajectory.append(cur_pose)
+
+    if display_matches:
+        cv2.destroyAllWindows()
+
+    return trajectory
+
+
 if __name__ == "__main__":
     #load calibration data
     CamCal = Calibration()
@@ -185,24 +209,15 @@ if __name__ == "__main__":
                           CamCal=CamCal,
                           grayscale=True)
 
-    vo = VisualOdometry(CamCal=CamCal,
-                        images=dataset,
-                        display_matches=True)
-
-    est_path = []
-    for i in tqdm(range(len(vo.images))):
-        if i == 0:
-            cur_pose = np.eye(4)
-        else:
-            q1, q2 = vo.get_matches(i)
-            transf = vo.get_pose(q1, q2)
-            cur_pose = cur_pose @ np.linalg.inv(transf)
-        est_path.append([cur_pose[0, 3], cur_pose[1, 3], cur_pose[2, 3]])
+    est_path = estimate_egomotion(CamCal=CamCal,
+                                  images=dataset,
+                                  display_matches=True)
 
     est_path = np.array(est_path)
-    cv2.destroyAllWindows()
+
+    np.save(open("egomotion.npy", "wb"), est_path)
 
     #plot path
     fig = plt.axes(projection='3d')
-    fig.plot3D(est_path[:, 1], est_path[:, 0], est_path[:, 2])
+    fig.plot3D(est_path[:, 1, 3], est_path[:, 0, 3], est_path[:, 2, 3])
     plt.show()

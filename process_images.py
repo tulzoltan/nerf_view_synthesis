@@ -8,7 +8,8 @@ import numpy as np
 from tqdm import tqdm
 
 from calibration import Calibration, ImageLoader
-from visual_odometry import VisualOdometry
+from visual_odometry import estimate_egomotion
+#from visualization import visualize_cameras
 
 
 class RayMaker():
@@ -47,60 +48,16 @@ class RayMaker():
         return ray_oris, ray_dirs
 
 
-def format_pixel_data(CamCal: Calibration,
-                      trajectory: np.array,
-                      images,
-                      output_name: str) -> None:
-    H, W = CamCal.Size
-
-    #Make rays
-    rays = RayMaker(width=W, height=H, intrinsic=CamCal.CameraMatrix)
-
-    dataset = np.empty((len(images)*H*W, 9), dtype=np.float32)
-    for ind in tqdm(range(len(images))):
-        img = images[ind]
-        ext = trajectory[ind]
-
-        #get ray origins and directions
-        ray_oris, ray_dirs = rays.make(ext)
-
-        #combine ray and pixel data
-        pixels = np.hstack([ray_oris.reshape(-1, 3),
-                            ray_dirs.reshape(-1, 3),
-                            img.reshape(-1, 3)])
-
-        dataset[ind*H*W: (ind+1)*H*W] = pixels
-
-    with open(output_name, "wb") as file:
-        pickle.dump(dataset, file)
-
-    print(f"{len(images)} images saved to {output_name}")
-    print(f"number of pixels: {len(dataset)}")
-
-
 def process(CamCal: Calibration,
             image_directory: str,
-            output_name: str) -> None:
+            output_name: str):
     #data loader for images
     images = ImageLoader(directory=image_directory,
                          CamCal=CamCal,
                          grayscale=True)
 
-    #get egomotion data
-    vo = VisualOdometry(CamCal=CamCal,
-                        images=images,
-                        display_matches=False)
-
     print("Performing visual odometry to obtain extrinsic matrices...")
-    trajectory = []
-    for i in tqdm(range(len(vo.images))):
-        if i == 0:
-            cur_pose = np.eye(4)
-        else:
-            q1, q2 = vo.get_matches(i)
-            transf = vo.get_pose(q1, q2)
-            cur_pose = cur_pose @ np.linalg.inv(transf)
-        trajectory.append(cur_pose)
+    trajectory = estimate_egomotion(CamCal, images)
 
     images.grayscale=False
     images.normalize=True
@@ -140,7 +97,7 @@ def process(CamCal: Calibration,
         json.dump(metadata, metafile)
 
     print(f"{len(images)} images saved to {output_name}")
-    #print(f"number of pixels: {len(dataset)}")
+    return trajectory
 
 
 def test_images(file_name, H, W, index=0):
@@ -165,9 +122,12 @@ if __name__ == "__main__":
 
     #process test images
     out_name = "training_data.pkl"
-    process(CamCal=CamCal,
-            image_directory="images/sequence1",
-            output_name=out_name)
+    cam_poses = process(CamCal=CamCal,
+                        image_directory="images/sequence1",
+                        output_name=out_name)
+
+    with open("camera_poses.npy", "wb") as ego:
+        np.save(ego, cam_poses)
 
     #check processed test images
     test_images(out_name, CamCal.Size[0], CamCal.Size[1], index=2)
