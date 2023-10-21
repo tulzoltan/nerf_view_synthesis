@@ -215,7 +215,7 @@ if __name__ == "__main__":
 
     est_path = np.array(est_path)
 
-    np.save(open("egomotion.npy", "wb"), est_path)
+    #np.save(open("egomotion.npy", "wb"), est_path)
 
     #plot path
     fig = plt.axes(projection='3d')

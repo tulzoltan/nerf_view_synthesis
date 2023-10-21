@@ -13,7 +13,10 @@ from odometry import estimate_egomotion
 
 
 class RayMaker():
-    def __init__(self, width: int, height: int, intrinsic: np.array):
+    def __init__(self,
+                 width: int,
+                 height: int,
+                 intrinsic: np.ndarray):
         #parameters
         fx = intrinsic[0, 0]
         fy = intrinsic[1, 1]
@@ -35,7 +38,7 @@ class RayMaker():
 
         self.ray_dirs_cam = np.dstack([dx, dy, dz])
 
-    def make(self, extrinsic: np.array):
+    def make(self, extrinsic: np.ndarray):
         R = extrinsic[:3, :3]
         t = extrinsic[:3, 3]
 

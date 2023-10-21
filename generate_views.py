@@ -11,8 +11,8 @@ from process_images import RayMaker
 from nerf import NerfModel, render_rays
 
 
-def create_extrinsic(old_exts: np.array,
-                     i: int = 0) -> np.array():
+def create_extrinsic(old_exts, 
+                     i: int = 0):
     assert i in range(0, len(old_exts)-1)
 
     new_ext = np.eye(4)
@@ -27,7 +27,7 @@ def create_extrinsic(old_exts: np.array,
         #normalize
         new_ext[:3, k] /= np.sqrt(np.sum(new_ext[:3, k]**2))
 
-    return nex_ext
+    return new_ext
 
 
 @torch.no_grad()
@@ -70,33 +70,37 @@ if __name__ == "__main__":
 
     #parameters
     DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    HIDDEN_DIM = 32
+    HIDDEN_DIM = 64
     HEIGHT = metadata["height"]
     WIDTH = metadata["width"]
     BATCH_SIZE = 1024
     NUM_BINS = 48
-    NEAR = 2
-    FAR = 6
+    NEAR = 1
+    FAR = 7
 
-    load_name = f"BASE_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
+    load_name = f"BASE2_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
 
     #load data
     print("Loading egomotion data ...")
-    egomotion = np.load("egomotion.npy", allow_pickle=True)
+    egomotion = np.load("camera_poses.npy",
+                        allow_pickle=True)
     ind = np.random.randint(0, len(egomotion)-1)
     ext = create_extrinsic(egomotion, ind)
     print(ext)
 
     fx = metadata["focal_x"]
     fy = metadata["focal_y"]
-    cx = WIDTH / 2
-    cy = HEIGHT / 2
+    cx = WIDTH / 2.0
+    cy = HEIGHT / 2.0
     rays = RayMaker(width=WIDTH,
                     height=HEIGHT,
                     intrinsic=np.array([[fx,  0, cx],
                                         [ 0, fy, cy],
                                         [ 0,  0,  1]]))
-    rays.make(ext)
+    ray_oris, ray_dirs = rays.make(ext)
+
+    ray_oris = torch.tensor(ray_oris.reshape(-1, 3).astype(np.float32))
+    ray_dirs = torch.tensor(ray_dirs.reshape(-1, 3).astype(np.float32))
 
     #set up NN model
     print("Loading neural network ...")
@@ -116,14 +120,13 @@ if __name__ == "__main__":
     print("Testing ...")
 
     #generate image
-    img = test(model, hn=NEAR, hf=FAR, ray_oris=ray_oris, rayw_dirs=ray_dirs, 
+    img = test(model, hn=NEAR, hf=FAR, ray_oris=ray_oris, ray_dirs=ray_dirs, 
                 H=HEIGHT, W=WIDTH, device=DEVICE, n_bins=NUM_BINS)
 
-
     f, ax = plt.subplots(1, 1, figsize=(12, 4))
-    ax[0].imshow(img)
-    ax[0].set_title("original image")
-    plot_name = os.path.join(output_dir, f"{pref}_{cname}_IMG{ind}_N{NEAR}_F{FAR}.png")
+    ax.imshow(img)
+    ax.set_title("original image")
+    plot_name = os.path.join(out_dir, f"TESTIMG_N{NEAR}_F{FAR}.png")
     plt.savefig(plot_name, bbox_inches="tight")
     plt.close()
 
