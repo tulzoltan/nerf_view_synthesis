@@ -8,7 +8,7 @@ import numpy as np
 from tqdm import tqdm
 
 from calibration import Calibration, ImageLoader
-from visual_odometry import estimate_egomotion
+from odometry import estimate_egomotion
 #from visualization import visualize_cameras
 
 
@@ -123,7 +123,7 @@ if __name__ == "__main__":
     #process test images
     out_name = "training_data.pkl"
     cam_poses = process(CamCal=CamCal,
-                        image_directory="images/sequence1",
+                        image_directory="images/sequence2",
                         output_name=out_name)
 
     with open("camera_poses.npy", "wb") as ego:

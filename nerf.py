@@ -183,7 +183,7 @@ def train(nerf_model, optimizer, scheduler, data_loader, device='cpu', hn=0, hf=
 def test(model, hn, hf, dataset, plot_name, H, W, device='cpu', chunk_size=10, img_index=0, n_bins=192):
     """
     Parameters:
-        model: trained model
+        model: trained neural network
         hn: distance from near plane
         hf: distance from far plane
         dataset: ray origins and directions for generating new views
@@ -237,19 +237,19 @@ if __name__ == "__main__":
 
     #parameters
     DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    HIDDEN_DIM = 32 #256
+    HIDDEN_DIM = 128 #256
     HEIGHT = metadata["height"]
     WIDTH = metadata["width"]
     BATCH_SIZE = 1024
-    NUM_BINS = 48 #192
-    EPOCHS = 1 #16
-    NEAR = 2
-    FAR = 6
+    NUM_BINS = 96 #192
+    EPOCHS = 4 #16
+    NEAR = 1
+    FAR = 8
 
     Qtrain = True
     Qload = False
-    save_name =  f"BASE_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
-    load_name = f"BASE_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
+    save_name =  f"BASE2_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
+    load_name = f"BASE2_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
 
     #load data
     print("Loading datasets ...")
