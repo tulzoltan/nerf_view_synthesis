@@ -15,6 +15,7 @@ def transform_extrinsic_matrices(extrinsics: np.array):
 
 
 def visualize_cameras(extrinsics: np.array,
+                      extra: int = 0,
                       scale: int = 0.1) -> None:
     vis = o3d.visualization.Visualizer()
     vis.create_window()
@@ -37,21 +38,24 @@ def visualize_cameras(extrinsics: np.array,
     #draw camera path
     lines = o3d.geometry.LineSet()
     lines.points = o3d.utility.Vector3dVector(extrinsics[:, :3, 3])
-    line_segments = [ [i, i+1] for i in range(len(extrinsics)-1) ]
+    line_segments = [ [i, i+1] for i in range(len(extrinsics)-1-extra) ]
     lines.lines = o3d.utility.Vector2iVector(line_segments)
     lines.paint_uniform_color([0.1, 0.7, 0.5])
 
     vis.add_geometry(lines)
 
     #draw camera directions
-    for pose in extrinsics:
+    for ind, pose in enumerate(extrinsics):
         camera = o3d.geometry.TriangleMesh.create_arrow(
                     cylinder_radius=scale/8,
                     cylinder_height=scale,
                     cone_radius=scale/4,
                     cone_height=scale/2
                 )
-        camera.paint_uniform_color([0.7, 0.1, 0.2])
+        if ind == len(extrinsics) - extra:
+            camera.paint_uniform_color([0.2, 0.1, 0.7])
+        else:
+            camera.paint_uniform_color([0.7, 0.1, 0.2])
         camera.transform(pose)
         vis.add_geometry(camera)
 
@@ -64,6 +68,13 @@ def visualize_cameras(extrinsics: np.array,
 
 
 if __name__ == "__main__":
+    import os
+
     positions = np.load(open("camera_poses.npy", "rb"))
 
-    visualize_cameras(positions, scale=0.2)
+    if os.path.exists("new_camera_poses.npy"):
+        new_pos = np.load(open("new_camera_poses.npy", "rb"))
+        positions = np.concatenate((positions, new_pos))
+        extra = len(new_pos)
+
+    visualize_cameras(positions, extra=extra, scale=0.2)

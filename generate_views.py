@@ -15,17 +15,25 @@ def create_extrinsic(old_exts,
                      i: int = 0):
     assert i in range(0, len(old_exts)-1)
 
+    ratio = 0.5
+    c1, c2 = ratio, 1 - ratio
     new_ext = np.eye(4)
 
     #new translation vector
-    new_ext[:3, 3] = (old_exts[i, :3, 3] + old_exts[i+1, :3, 3]) / 2
+    new_ext[:3, 3] = c1*old_exts[i, :3, 3] + c2*old_exts[i+1, :3, 3]
 
     #new rotation matrix
     for k in range(3):
-        #add old eigenvectors
-        new_ext[:3, k] = old_exts[i, :3, k] + old_exts[i+1, :3, k]
+        #combine column vectors
+        new_ext[:3, k] = c1*old_exts[i, :3, k] + c2*old_exts[i+1, :3, k]
+        #orthoginalize
+        for l in range(k):
+            coef = new_ext[:3, l] @ new_ext[:3, k]
+            new_ext[:3, k] -= coef * new_ext[:3, l]
         #normalize
         new_ext[:3, k] /= np.sqrt(np.sum(new_ext[:3, k]**2))
+
+    print("ext check: ", new_ext[:3, :3] @ (new_ext[:3, :3].T), sep='\n')
 
     return new_ext
 
@@ -60,6 +68,29 @@ def test(model, hn, hf, ray_oris, ray_dirs, H, W, device='cpu', chunk_size=10, n
     return img
 
 
+class ViewGenerator():
+    def __init__(self, width, height, fx, fy, cx, cy):
+        intrinsic = np.array([[fx,  0, cx],
+                              [ 0, fy, cy],
+                              [ 0,  0,  1]])
+
+        self.rays = RayMaker(width=width, height=height,
+                             intrinsic=intrinsic)
+
+    def generate(self, ext: np.ndarray):
+        print(f"Generating view for extrinsic matrix\n{ext}\n...")
+
+        ray_oris, ray_dirs = self.rays.make(ext)
+        ray_oris = torch.tensor(ray_oris.reshape(-1, 3).astype(np.float32))
+        ray_dirs = torch.tensor(ray_dirs.reshape(-1, 3).astype(np.float32))
+
+        img = test(model, hn=NEAR, hf=FAR, ray_oris=ray_oris,
+                   ray_dirs=ray_dirs, H=HEIGHT, W=WIDTH, 
+                   device=DEVICE, n_bins=NUM_BINS)
+
+        return img
+
+
 if __name__ == "__main__":
     import json
 
@@ -84,23 +115,13 @@ if __name__ == "__main__":
     print("Loading egomotion data ...")
     egomotion = np.load("camera_poses.npy",
                         allow_pickle=True)
-    ind = np.random.randint(0, len(egomotion)-1)
-    ext = create_extrinsic(egomotion, ind)
-    print(ext)
 
-    fx = metadata["focal_x"]
-    fy = metadata["focal_y"]
-    cx = WIDTH / 2.0
-    cy = HEIGHT / 2.0
-    rays = RayMaker(width=WIDTH,
-                    height=HEIGHT,
-                    intrinsic=np.array([[fx,  0, cx],
-                                        [ 0, fy, cy],
-                                        [ 0,  0,  1]]))
-    ray_oris, ray_dirs = rays.make(ext)
-
-    ray_oris = torch.tensor(ray_oris.reshape(-1, 3).astype(np.float32))
-    ray_dirs = torch.tensor(ray_dirs.reshape(-1, 3).astype(np.float32))
+    gen = ViewGenerator(width=WIDTH,
+                        height=HEIGHT,
+                        fx=metadata["focal_x"],
+                        fy=metadata["focal_y"],
+                        cx=WIDTH/2.0,
+                        cy=HEIGHT/2.0)
 
     #set up NN model
     print("Loading neural network ...")
@@ -116,17 +137,30 @@ if __name__ == "__main__":
         import sys
         sys.exit()
 
-    #test model
-    print("Testing ...")
+    #generate novel view
+    #ind = np.random.randint(0, len(egomotion)-1)
+    ind = 7
+    ext = create_extrinsic(egomotion, ind)
 
-    #generate image
-    img = test(model, hn=NEAR, hf=FAR, ray_oris=ray_oris, ray_dirs=ray_dirs, 
-                H=HEIGHT, W=WIDTH, device=DEVICE, n_bins=NUM_BINS)
+    with open("new_camera_poses.npy", "wb") as ncp:
+        np.save(ncp, np.expand_dims(ext, axis=0))
 
-    f, ax = plt.subplots(1, 1, figsize=(12, 4))
-    ax.imshow(img)
-    ax.set_title("original image")
-    plot_name = os.path.join(out_dir, f"TESTIMG_N{NEAR}_F{FAR}.png")
+    img_new = gen.generate(ext)
+
+    #generate known images for check
+    img0 = gen.generate(egomotion[ind])
+    img1 = gen.generate(egomotion[ind+1])
+
+    #make plot
+    f, ax = plt.subplots(1, 3, figsize=(12, 4))
+    ax[0].imshow(img0)
+    ax[0].set_title(f"training image {ind}")
+    ax[1].imshow(img1)
+    ax[1].set_title(f"training image {ind+1}")
+    ax[2].imshow(img_new)
+    ax[2].set_title("generated image")
+    plot_name = os.path.join(out_dir, f"newTESTIMG_N{NEAR}_F{FAR}.png")
     plt.savefig(plot_name, bbox_inches="tight")
     plt.close()
 
+    print(f"Image saved to file {plot_name}")
