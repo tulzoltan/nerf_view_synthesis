@@ -33,8 +33,6 @@ def create_extrinsic(old_exts,
         #normalize
         new_ext[:3, k] /= np.sqrt(np.sum(new_ext[:3, k]**2))
 
-    print("ext check: ", new_ext[:3, :3] @ (new_ext[:3, :3].T), sep='\n')
-
     return new_ext
 
 
@@ -106,10 +104,10 @@ if __name__ == "__main__":
     WIDTH = metadata["width"]
     BATCH_SIZE = 1024
     NUM_BINS = 48
-    NEAR = 1
+    NEAR = 0
     FAR = 7
 
-    load_name = f"BASE2_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
+    load_name = f"BASE3v2_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
 
     #load data
     print("Loading egomotion data ...")
@@ -159,7 +157,7 @@ if __name__ == "__main__":
     ax[1].set_title(f"training image {ind+1}")
     ax[2].imshow(img_new)
     ax[2].set_title("generated image")
-    plot_name = os.path.join(out_dir, f"newTESTIMG_N{NEAR}_F{FAR}.png")
+    plot_name = os.path.join(out_dir, f"newv2TESTIMG_N{NEAR}_F{FAR}.png")
     plt.savefig(plot_name, bbox_inches="tight")
     plt.close()
 

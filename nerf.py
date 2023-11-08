@@ -9,10 +9,15 @@ from torch.utils.data import DataLoader
 
 
 """
-Written following the work of Mildenhall et al.:
+Based on the work of Mildenhall et al.:
 NeRF: Representing Scenes as Neural Radiance Fields for View Synthesis
 arXiv: 2003.08934
 github: https://github.com/bmild/nerf
+
+and modified according to
+MiP-NeRF: A Multiscale Representation for Anti-Aliasing Neural Radiance Fields
+arXiv: 2103.13415
+github: https://github.com/google/mipnerf/
 """
 
 
@@ -33,7 +38,7 @@ class NerfModel(nn.Module):
                 nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(), 
                 )
-        #density estimation
+
         self.block2 = nn.Sequential(
                 nn.Linear(embedding_dim_pos*6+hidden_dim+3, hidden_dim),
                 nn.ReLU(),
@@ -43,18 +48,20 @@ class NerfModel(nn.Module):
                 nn.ReLU(),
                 nn.Linear(hidden_dim, hidden_dim+1)
                 )
-        #color estimation
+
         self.block3 = nn.Sequential(
                 nn.Linear(embedding_dim_dir*6+hidden_dim+3, hidden_dim//2),
                 nn.ReLU(),
+                nn.Linear(hidden_dim//2, 3)
                 )
-        self.block4 = nn.Sequential(
-                nn.Linear(hidden_dim//2, 3),
-                nn.Sigmoid(),
-                )
+
+        self.density_activation = nn.Softplus()
+        self.density_bias = -1.0
+        self.color_activation = nn.Sigmoid()
+        self.color_padding = 0.001
+
         self.embedding_dim_pos = embedding_dim_pos
         self.embedding_dim_dir = embedding_dim_dir
-        self.relu = nn.ReLU()
 
     @staticmethod
     def positional_encoding(x, L):
@@ -65,14 +72,21 @@ class NerfModel(nn.Module):
         return torch.cat(out, dim=1)
 
     def forward(self, o, d):
+        #apply positional encoding to position and direction vectors
         #emb_x: [batch_size, embedding_dim_pos*6]
         emb_x = self.positional_encoding(o, self.embedding_dim_pos)
         emb_d = self.positional_encoding(d, self.embedding_dim_dir)
+
+        #density estimation
         h = self.block1(emb_x)
         tmp = self.block2(torch.cat((h, emb_x), dim=1))
-        h, sigma = tmp[:, :-1], self.relu(tmp[:, -1])
-        h = self.block3(torch.cat((h, emb_d), dim=1))
-        c = self.block4(h)
+        h = tmp[:, :-1]
+        sigma = self.density_activation(tmp[:, -1] + self.density_bias)
+
+        #color estimation
+        c = self.block3(torch.cat((h, emb_d), dim=1))
+        c = self.color_activation(c)
+        c = c * (1 + 2*self.color_padding) - self.color_padding
         return c, sigma
 
 
@@ -134,7 +148,7 @@ def render_rays(nerf_model, ray_oris, ray_dirs, hn=0, hf=0.5, n_bins=192):
     return pix_col
 
 
-def train(nerf_model, optimizer, scheduler, data_loader, device='cpu', hn=0, hf=1, epochs=int(1e5), n_bins=192, H=400, W=400):
+def train(nerf_model, optimizer, scheduler, data_loader, device='cpu', hn=0, hf=1, epochs=int(1e5), n_bins=192):
     """
     Parameters:
         nerf_model: NN model to be trained
@@ -159,9 +173,12 @@ def train(nerf_model, optimizer, scheduler, data_loader, device='cpu', hn=0, hf=
             ray_dirs = batch[:, 3:6].to(device)
             ground_truth_px_vals = batch[:, 6:].to(device)
 
+            #generate pixels
             regenerated_px_vals = render_rays(
                                 nerf_model, ray_oris, ray_dirs,
                                 hn=hn, hf=hf, n_bins=n_bins)
+
+            #Loss function
             loss = ((ground_truth_px_vals - regenerated_px_vals) ** 2).sum()
 
             optimizer.zero_grad()
@@ -237,19 +254,19 @@ if __name__ == "__main__":
 
     #parameters
     DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    HIDDEN_DIM = 128 #256
+    HIDDEN_DIM = 64 #256
     HEIGHT = metadata["height"]
     WIDTH = metadata["width"]
     BATCH_SIZE = 1024
-    NUM_BINS = 96 #192
+    NUM_BINS = 48 #192
     EPOCHS = 4 #16
-    NEAR = 1
-    FAR = 8
+    NEAR = 0
+    FAR = 7
 
     Qtrain = True
     Qload = False
-    save_name =  f"BASE2_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
-    load_name = f"BASE2_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
+    save_name = f"BASE3v2_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
+    load_name = f"BASE3v2_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
 
     #load data
     print("Loading datasets ...")
@@ -282,7 +299,7 @@ if __name__ == "__main__":
         print("Commencing training ...")
         loss = train(model, optimizer, scheduler, data_loader,
                      epochs=EPOCHS, device=DEVICE, hn=NEAR, hf=FAR,
-                     n_bins=NUM_BINS, H=HEIGHT, W=WIDTH)
+                     n_bins=NUM_BINS)
 
         #save progress
         save_file = os.path.join(wgt_dir, save_name + ".pth.tar")
@@ -296,7 +313,7 @@ if __name__ == "__main__":
         if Qload:
             plt.title(f"Loss in {EPOCHS} epochs")
         elif EPOCHS > 1:
-            plt.title(f"Loss in first {EPOCH} epochs")
+            plt.title(f"Loss in first {EPOCHS} epochs")
         else:
             plt.title(f"Loss in first epoch")
         fig_name = os.path.join(out_dir, save_name + (f"loss_EP{EPOCHS}"))
