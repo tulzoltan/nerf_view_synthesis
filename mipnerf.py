@@ -73,7 +73,7 @@ def integrated_positional_encoding(x, x_cov, L, diag = True):
         scales = torch.tensor([2**i for i in range(L)]).to(device)
         shape = list(x.shape[:-1]) + [-1]
         y = torch.reshape(x[..., None, :] * scales[:, None], shape)
-        y_var = torch.reshape(x_cov[..., None, :] * scales[:, None], shape)
+        y_var = torch.reshape(x_cov[..., None, :] * scales[:, None]**2, shape)
 
     else:
         dims = x.shape[-1]
@@ -85,7 +85,7 @@ def integrated_positional_encoding(x, x_cov, L, diag = True):
 
     #expected sine and cosine
     evar = torch.exp(-y_var/2)
-    return torch.cat([evar*torch.sin(y), evar*torch.cos(y)])
+    return torch.cat([x, evar*torch.sin(y), evar*torch.cos(y)], dim=1)
 
 
 def positional_encoding(x, L):
@@ -146,8 +146,8 @@ class MipNerfModel(nn.Module):
     def forward(self, x, x_cov, d):
         #apply positional encoding to position and direction vectors
         #emb_x: [batch_size, embedding_dim_pos*6]
-        emb_x = positional_encoding(x, self.embedding_dim_pos)
-        #emb_x = integrated_positional_encoding(x, x_cov, self.embedding_dim_pos)
+        #emb_x = positional_encoding(x, self.embedding_dim_pos)
+        emb_x = integrated_positional_encoding(x, x_cov, self.embedding_dim_pos)
         emb_d = positional_encoding(d, self.embedding_dim_dir)
 
         #density estimation
@@ -157,7 +157,6 @@ class MipNerfModel(nn.Module):
         sigma = self.density_activation(tmp[:, -1] + self.density_bias)
 
         #color estimation
-        print(h.shape, emb_d.shape)
         c = self.block3(torch.cat((h, emb_d), dim=1))
         c = self.color_activation(c)
         c = c * (1 + 2*self.color_padding) - self.color_padding
@@ -212,17 +211,18 @@ def render_rays(nerf_model, ray_oris, ray_dirs, radius,
     #generate random points along each ray to sample
     #COMMENT: n_bins -> n_bins+1 in t def; check how delta is defined in paper
     #tensor([1e10]) might need to be removed
-    t = torch.linspace(hn, hf, n_bins, device=device).expand(ray_oris.shape[0], n_bins)
+    t = torch.linspace(hn, hf, n_bins+1, device=device).expand(ray_oris.shape[0], n_bins+1)
     mid = (t[:, :-1] + t[:, 1:]) / 2.
     lower = torch.cat((t[:, :1], mid), -1)
     upper = torch.cat((mid, t[:, -1:]), -1)
     u = torch.rand(t.shape, device=device)
     t = lower + (upper - lower) * u #[batch_size, n_bins]
 
-    delta = torch.cat(
-            (t[:, 1:] - t[:, :-1],
-             torch.tensor([1e10], device=device).expand(ray_oris.shape[0], 1)),
-            -1)
+    #delta = torch.cat(
+    #        (t[:, 1:] - t[:, :-1],
+    #         torch.tensor([1e10], device=device).expand(ray_oris.shape[0], 1)),
+    #        -1)
+    delta = t[:, 1:] - t[:, :-1]
 
     #compute the position of sample points in 3D space
     x, x_cov = cast_rays(t, ray_oris, ray_dirs, radius, diag=diag)
@@ -327,13 +327,13 @@ if __name__ == "__main__":
     RADIUS = metadata["width"] / metadata["focal_x"] / np.sqrt(3)
     BATCH_SIZE = 1024
     NUM_BINS = 48 #192
-    EPOCHS = 1 #16
+    EPOCHS = 4 #16
     NEAR = 0
     FAR = 7
 
     Qload = False
-    save_name = f"mipBASE3v2_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
-    load_name = f"mipBASE3v2_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
+    save_name = f"mipBASE3_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
+    load_name = f"mipBASE3_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
 
     #load data
     print("Loading datasets ...")
