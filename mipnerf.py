@@ -25,8 +25,8 @@ def conical_frustrum_gaussian(d, t0, t1, radius, diag = True):
     mu = (t0 + t1) / 2
     hw = (t1 - t0) / 2
     t_mean = mu + (2*mu*hw**2) / (3*mu**2 + hw**2)
-    t_var = hw**2/3 - 4*hw**4*(12*mu**2-hw**2) / (15*(2*mu**2+hw**2)**2)
-    r_var = radius**2*(mu**2/4 + 5*hw**2/12 - 4*hw**4/(15*(2*mu**2+hw**2)))
+    t_var = hw**2/3 - 4*hw**4*(12*mu**2-hw**2) / (15*(3*mu**2+hw**2)**2)
+    r_var = radius**2*(mu**2/4 + 5*hw**2/12 - 4*hw**4/(15*(3*mu**2+hw**2)))
 
     #expectation value
     mean = d[..., None, :] * t_mean[..., None]
@@ -85,7 +85,7 @@ def integrated_positional_encoding(x, x_cov, L, diag = True):
 
     #expected sine and cosine
     evar = torch.exp(-y_var/2)
-    return torch.cat([x, evar*torch.sin(y), evar*torch.cos(y)], dim=1)
+    return torch.cat([evar*torch.sin(y), evar*torch.cos(y)], dim=1)
 
 
 def positional_encoding(x, L):
@@ -94,7 +94,7 @@ def positional_encoding(x, L):
         x: an array of variables to be encoded
         L: truncation of encoding
     """
-    out = [x]
+    out = []
     for j in range(L):
         out.append(torch.sin(2**j*x))
         out.append(torch.cos(2**j*x))
@@ -109,7 +109,7 @@ class MipNerfModel(nn.Module):
         super(MipNerfModel, self).__init__()
 
         self.block1 = nn.Sequential(
-                nn.Linear(embedding_dim_pos*6+3, hidden_dim),
+                nn.Linear(embedding_dim_pos*6, hidden_dim),
                 nn.ReLU(), 
                 nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(), 
@@ -120,7 +120,7 @@ class MipNerfModel(nn.Module):
                 )
 
         self.block2 = nn.Sequential(
-                nn.Linear(embedding_dim_pos*6+hidden_dim+3, hidden_dim),
+                nn.Linear(embedding_dim_pos*6+hidden_dim, hidden_dim),
                 nn.ReLU(),
                 nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(),
@@ -130,7 +130,7 @@ class MipNerfModel(nn.Module):
                 )
 
         self.block3 = nn.Sequential(
-                nn.Linear(embedding_dim_dir*6+hidden_dim+3, hidden_dim//2),
+                nn.Linear(embedding_dim_dir*6+hidden_dim, hidden_dim//2),
                 nn.ReLU(),
                 nn.Linear(hidden_dim//2, 3)
                 )
@@ -218,11 +218,11 @@ def render_rays(nerf_model, ray_oris, ray_dirs, radius,
     u = torch.rand(t.shape, device=device)
     t = lower + (upper - lower) * u #[batch_size, n_bins]
 
-    #delta = torch.cat(
-    #        (t[:, 1:] - t[:, :-1],
-    #         torch.tensor([1e10], device=device).expand(ray_oris.shape[0], 1)),
-    #        -1)
     delta = t[:, 1:] - t[:, :-1]
+
+    #dx = torch.sqrt(torch.sum((ray_dirs[:, :-1, :, :] - ray_dirs[:, 1:, :, :])**2, -1))
+    #dx = torch.cat([dx, dx[:, -2:-1, :]], 1)
+    #radius = dx[..., None] / np.sqrt(3)
 
     #compute the position of sample points in 3D space
     x, x_cov = cast_rays(t, ray_oris, ray_dirs, radius, diag=diag)
@@ -247,9 +247,9 @@ def render_rays(nerf_model, ray_oris, ray_dirs, radius,
     #regularization for white background
     weight_sum = weights.sum(-1).sum(-1)
 
-    pix_col = c + 1 - weight_sum.unsqueeze(-1)
+    c = c + 1 - weight_sum.unsqueeze(-1)
 
-    return pix_col
+    return c
 
 
 def train(nerf_model, optimizer, scheduler, data_loader, radius, device='cpu', hn=0, hf=1, epochs=1, n_bins=192):
@@ -324,7 +324,7 @@ if __name__ == "__main__":
     HIDDEN_DIM = 64 #256
     HEIGHT = metadata["height"]
     WIDTH = metadata["width"]
-    RADIUS = metadata["width"] / metadata["focal_x"] / np.sqrt(3)
+    RADIUS = 1.0 / np.sqrt(3)
     BATCH_SIZE = 1024
     NUM_BINS = 48 #192
     EPOCHS = 4 #16
