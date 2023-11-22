@@ -71,7 +71,7 @@ def process(CamCal: Calibration,
     #Make rays
     rays = RayMaker(width=W, height=H, intrinsic=CamCal.CameraMatrix)
 
-    dataset = np.empty((len(images)*H*W, 9), dtype=np.float32)
+    dataset = np.empty((len(images)*H*W, 10), dtype=np.float32)
     for ind in tqdm(range(len(images))):
         img = images[ind]
         ext = trajectory[ind]
@@ -79,10 +79,16 @@ def process(CamCal: Calibration,
         #get ray origins and directions
         ray_oris, ray_dirs = rays.make(ext)
 
+        #compute cone radius for each pixel
+        dx = np.sqrt(np.sum((ray_dirs[:, :-1, :] - ray_dirs[:, 1:, :])**2, -1))
+        dx = dx / np.sqrt(3)
+        dx = np.hstack([dx, dx[:, -2:-1]])
+
         #combine ray and pixel data
         pixels = np.hstack([ray_oris.reshape(-1, 3),
                             ray_dirs.reshape(-1, 3),
-                            img.reshape(-1, 3)])
+                            img.reshape(-1, 3),
+                            dx.reshape(-1, 1)])
 
         dataset[ind*H*W: (ind+1)*H*W] = pixels
 
@@ -106,7 +112,7 @@ def process(CamCal: Calibration,
 def test_images(file_name, H, W, index=0):
     pixels = np.load(file_name, allow_pickle=True)
 
-    img = pixels[index*H*W: (index+1)*H*W, 6:]
+    img = pixels[index*H*W: (index+1)*H*W, 6:9]
     img = img.reshape((H, W, 3))
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
@@ -126,11 +132,14 @@ if __name__ == "__main__":
     #process test images
     out_name = "training_data.pkl"
     cam_poses = process(CamCal=CamCal,
-                        image_directory="images/sequence2",
+                        image_directory="images/sequence3",
                         output_name=out_name)
 
-    with open("camera_poses.npy", "wb") as ego:
+    egoname = "camera_poses.npy"
+    with open(egoname, "wb") as ego:
         np.save(ego, cam_poses)
+    print(f"Camera poses saved to {egoname}")
 
     #check processed test images
+    print("Displaying test image...")
     test_images(out_name, CamCal.Size[0], CamCal.Size[1], index=2)

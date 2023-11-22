@@ -190,14 +190,14 @@ def cast_rays(t_vals, ray_oris, ray_dirs, radius, diag = True):
     return means, covs
 
 
-def render_rays(nerf_model, ray_oris, ray_dirs, radius,
+def render_rays(nerf_model, ray_oris, ray_dirs, radii,
                 hn=0, hf=1, n_bins=192, diag=True):
     """
     Parameters:
         nerf_model: model for producing color and density information
         ray_oris: ray origins
         ray_dirs: ray directions
-        radius: radius of the cones on the camera plane
+        radii: radii of the cones on the camera plane
         hn: distance from near plane
         hf: distance from far plane
         n_bins: number of bins for density estimation
@@ -209,8 +209,6 @@ def render_rays(nerf_model, ray_oris, ray_dirs, radius,
     device = ray_oris.device
 
     #generate random points along each ray to sample
-    #COMMENT: n_bins -> n_bins+1 in t def; check how delta is defined in paper
-    #tensor([1e10]) might need to be removed
     t = torch.linspace(hn, hf, n_bins+1, device=device).expand(ray_oris.shape[0], n_bins+1)
     mid = (t[:, :-1] + t[:, 1:]) / 2.
     lower = torch.cat((t[:, :1], mid), -1)
@@ -220,12 +218,8 @@ def render_rays(nerf_model, ray_oris, ray_dirs, radius,
 
     delta = t[:, 1:] - t[:, :-1]
 
-    #dx = torch.sqrt(torch.sum((ray_dirs[:, :-1, :, :] - ray_dirs[:, 1:, :, :])**2, -1))
-    #dx = torch.cat([dx, dx[:, -2:-1, :]], 1)
-    #radius = dx[..., None] / np.sqrt(3)
-
     #compute the position of sample points in 3D space
-    x, x_cov = cast_rays(t, ray_oris, ray_dirs, radius, diag=diag)
+    x, x_cov = cast_rays(t, ray_oris, ray_dirs, radii, diag=diag)
 
     #expand the ray_dirs tensor to match the shape of x
     ray_dirs = ray_dirs.expand(n_bins, ray_dirs.shape[0], 3).transpose(0, 1)
@@ -252,14 +246,13 @@ def render_rays(nerf_model, ray_oris, ray_dirs, radius,
     return c
 
 
-def train(nerf_model, optimizer, scheduler, data_loader, radius, device='cpu', hn=0, hf=1, epochs=1, n_bins=192):
+def train(nerf_model, optimizer, scheduler, data_loader, device='cpu', hn=0, hf=1, epochs=1, n_bins=192):
     """
     Parameters:
         nerf_model: NN model to be trained
         optimizer: optimizer used for training
         scheduler: learning rate scheduler
         data_loader: object that handles training data
-        radius:
         device: device to be used for training (gpu or cpu)
         hn: distance from near cropping plane
         hf: distance from far cropping plane
@@ -274,13 +267,14 @@ def train(nerf_model, optimizer, scheduler, data_loader, radius, device='cpu', h
     count = 0
     for _ in tqdm(range(epochs)):
         for batch in tqdm(data_loader):
-            ray_oris = batch[:,  :3].to(device)
-            ray_dirs = batch[:, 3:6].to(device)
-            ground_truth_px_vals = batch[:, 6:].to(device)
+            ray_oris = batch[:,  :3 ].to(device)
+            ray_dirs = batch[:, 3:6 ].to(device)
+            radii    = batch[:, 9:10].to(device)
+            ground_truth_px_vals = batch[:, 6:9].to(device)
 
             #generate pixels
             regenerated_px_vals = render_rays(
-                                nerf_model, ray_oris, ray_dirs, radius,
+                                nerf_model, ray_oris, ray_dirs, radii,
                                 hn=hn, hf=hf, n_bins=n_bins)
 
             #Loss function
@@ -324,7 +318,6 @@ if __name__ == "__main__":
     HIDDEN_DIM = 64 #256
     HEIGHT = metadata["height"]
     WIDTH = metadata["width"]
-    RADIUS = 1.0 / np.sqrt(3)
     BATCH_SIZE = 1024
     NUM_BINS = 48 #192
     EPOCHS = 4 #16
@@ -363,7 +356,7 @@ if __name__ == "__main__":
 
     #train model
     print("Commencing training ...")
-    loss = train(model, optimizer, scheduler, data_loader, radius=RADIUS,
+    loss = train(model, optimizer, scheduler, data_loader,
                  epochs=EPOCHS, device=DEVICE, hn=NEAR, hf=FAR,
                  n_bins=NUM_BINS)
 

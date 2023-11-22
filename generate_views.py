@@ -8,7 +8,8 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
 from process_images import RayMaker
-from nerf import NerfModel, render_rays
+from mipnerf import MipNerfModel, render_rays
+#from nerf import NerfModel, render_rays
 
 
 def create_extrinsic(old_exts, 
@@ -37,7 +38,7 @@ def create_extrinsic(old_exts,
 
 
 @torch.no_grad()
-def test(model, hn, hf, ray_oris, ray_dirs, H, W, device='cpu', chunk_size=10, n_bins=192):
+def test(model, hn, hf, ray_oris, ray_dirs, radii, H, W, device='cpu', chunk_size=10, n_bins=192):
     """
     Parameters:
         model: trained neural network
@@ -45,6 +46,7 @@ def test(model, hn, hf, ray_oris, ray_dirs, H, W, device='cpu', chunk_size=10, n
         hf: distance from far plane
         ray_oris: ray origins for each pixel in the image
         ray_dirs: ray directions for each pixel in the image
+        radii: cone radii
         H: image height
         W: image width
         device: device to be used for testing (gpu or cpu)
@@ -57,7 +59,9 @@ def test(model, hn, hf, ray_oris, ray_dirs, H, W, device='cpu', chunk_size=10, n
         #iterate over chunks
         ray_oris_ = ray_oris[i*W*chunk_size: (i+1)*W*chunk_size].to(device)
         ray_dirs_ = ray_dirs[i*W*chunk_size: (i+1)*W*chunk_size].to(device)
+        radii_ = radii[i*W*chunk_size: (i+1)*W*chunk_size].to(device)
         regenerated_px_vals = render_rays(model, ray_oris_, ray_dirs_, 
+                                          radii=radii_,
                                           hn=hn, hf=hf, n_bins=n_bins)
         data.append(regenerated_px_vals)
 
@@ -75,15 +79,20 @@ class ViewGenerator():
         self.rays = RayMaker(width=width, height=height,
                              intrinsic=intrinsic)
 
-    def generate(self, ext: np.ndarray):
+    def generate(self, ext: np.ndarray, model):
         print(f"Generating view for extrinsic matrix\n{ext}\n...")
 
         ray_oris, ray_dirs = self.rays.make(ext)
+        radii = np.sqrt(np.sum((ray_dirs[:, :-1, :] - ray_dirs[:, 1:, :])**2, -1))
+        radii = radii / np.sqrt(3)
+        radii = np.hstack([radii, radii[:, -2:-1]])
+
         ray_oris = torch.tensor(ray_oris.reshape(-1, 3).astype(np.float32))
         ray_dirs = torch.tensor(ray_dirs.reshape(-1, 3).astype(np.float32))
+        radii = torch.tensor(radii.reshape(-1, 1).astype(np.float32))
 
         img = test(model, hn=NEAR, hf=FAR, ray_oris=ray_oris,
-                   ray_dirs=ray_dirs, H=HEIGHT, W=WIDTH, 
+                   ray_dirs=ray_dirs, radii=radii, H=HEIGHT, W=WIDTH, 
                    device=DEVICE, n_bins=NUM_BINS)
 
         return img
@@ -107,7 +116,7 @@ if __name__ == "__main__":
     NEAR = 0
     FAR = 7
 
-    load_name = f"BASE3v2_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
+    load_name = f"mipBASE3_HD{HIDDEN_DIM}_NB{NUM_BINS}_N{NEAR}_F{FAR}"
 
     #load data
     print("Loading egomotion data ...")
@@ -123,7 +132,7 @@ if __name__ == "__main__":
 
     #set up NN model
     print("Loading neural network ...")
-    model = NerfModel(hidden_dim=HIDDEN_DIM).to(DEVICE)
+    model = MipNerfModel(hidden_dim=HIDDEN_DIM).to(DEVICE)
     model.eval()
 
     #load weights
@@ -143,11 +152,11 @@ if __name__ == "__main__":
     with open("new_camera_poses.npy", "wb") as ncp:
         np.save(ncp, np.expand_dims(ext, axis=0))
 
-    img_new = gen.generate(ext)
+    img_new = gen.generate(ext, model)
 
     #generate known images for check
-    img0 = gen.generate(egomotion[ind])
-    img1 = gen.generate(egomotion[ind+1])
+    img0 = gen.generate(egomotion[ind], model)
+    img1 = gen.generate(egomotion[ind+1], model)
 
     #make plot
     f, ax = plt.subplots(1, 3, figsize=(12, 4))
@@ -157,7 +166,7 @@ if __name__ == "__main__":
     ax[1].set_title(f"training image {ind+1}")
     ax[2].imshow(img_new)
     ax[2].set_title("generated image")
-    plot_name = os.path.join(out_dir, f"newv2TESTIMG_N{NEAR}_F{FAR}.png")
+    plot_name = os.path.join(out_dir, f"mip_TESTIMG_N{NEAR}_F{FAR}.png")
     plt.savefig(plot_name, bbox_inches="tight")
     plt.close()
 
